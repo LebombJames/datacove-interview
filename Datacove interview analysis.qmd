@@ -1,0 +1,359 @@
+---
+title: "Datacove interview analysis"
+---
+
+## Setup
+
+```{r, label=setup}
+library(data.table)
+library(tidyverse)
+library(ggplot2)
+library(viridis)
+library(patchwork)
+
+df <- fread("./Electronic_sales_Sep2023-Sep2024.csv")
+```
+
+## Summary stats
+
+```{r}
+summary_sales_stats <- df |> summarise(
+    mean_order_cost = mean(`Total Price`),
+    sd_order_cost = sd(`Total Price`),
+    mean_rating = mean(Rating),
+    sd_rating = sd(Rating),
+    mean_addon_cost = mean(`Add-on Total`),
+    sd_addon_cost = sd(`Add-on Total`),
+    mean_quantity = mean(Quantity),
+    sd_quantity = sd(Quantity)
+)
+
+summary_population_stats <- df[!duplicated(df$`Customer ID`), ] |>
+    summarise(
+        mean_age = mean(Age) |> round(2),
+        sd_age = sd(Age) |> round(2),
+        range_age = range(Age) |> paste(collapse = " – ")
+    )
+
+gender_count <- df |>
+    count(Gender) |>
+    mutate(
+        proportion = n / nrow(df)
+    )
+
+loyalty_count <- df |>
+    count(`Loyalty Member`) |>
+    mutate(
+        proportion = n / nrow(df)
+    )
+
+payment_count <- df |>
+    count(`Payment Method`) |>
+    mutate(
+        proportion = n / nrow(df)
+    )
+
+shipping_count <- df |>
+    count(`Shipping Type`) |>
+    mutate(
+        proportion = n / nrow(df)
+    )
+
+cross_count <- df |> count(Gender, `Loyalty Member`, `Payment Method`, `Shipping Type`)
+
+totals_per_customer <- df |>
+    group_by(`Customer ID`) |>
+    summarise(
+        total_spending = sum(`Total Price`),
+        total_quantity = sum(Quantity)
+    )
+
+means_per_customer <- totals_per_customer |>
+    summarise(
+        mean_order_cost = mean(total_spending),
+        mean_quantity = mean(total_quantity)
+    )
+
+mean_orders_per_customer <- df |>
+    count(`Customer ID`) |>
+    summarise(
+        mean = mean(n)
+    )
+
+age_plot <- df[!duplicated(df$`Customer ID`), ] |> ggplot(aes(x = Age)) +
+    geom_histogram(binwidth = 1, fill = viridis(n = 1)) +
+    geom_vline(aes(xintercept = mean(Age)), color = "red") +
+    theme_minimal() +
+    theme(
+        plot.title = ggtext::element_markdown(),
+        plot.subtitle = ggtext::element_markdown()
+    ) +
+    labs(
+        y = "Count",
+        title = "**Age Histogram**",
+        subtitle = paste0(
+            "*M* = ", summary_population_stats$mean_age,
+            ", *SD* = ", summary_population_stats$sd_age,
+            ", Range = ", summary_population_stats$range_age
+        )
+    )
+
+price_plot <- df |> ggplot(aes(x = `Total Price`)) +
+    geom_histogram(binwidth = 250, fill = viridis(n = 1, begin = 0.2)) +
+    geom_vline(aes(xintercept = mean(`Total Price`)), color = "red") +
+    theme_minimal() +
+    theme(
+        plot.title = ggtext::element_markdown(),
+        plot.subtitle = ggtext::element_markdown()
+    ) +
+    labs(
+        y = "Count",
+        title = "**Price Histogram**",
+        subtitle = paste0(
+            "*M* = ", summary_sales_stats$mean_order_cost |> round(2),
+            ", *SD* = ", summary_sales_stats$sd_order_cost |> round(2),
+            ", Max = ", df$`Total Price` |> max()
+        )
+    )
+
+addon_plot <- df |>
+    filter(`Add-on Total` > 0) |>
+    ggplot(aes(x = `Add-on Total`)) +
+    geom_histogram(binwidth = 1, fill = viridis(n = 1, begin = 0.4)) +
+    geom_vline(aes(xintercept = mean(`Add-on Total`)), color = "red") +
+    theme_minimal() +
+    theme(
+        plot.subtitle = ggtext::element_markdown(),
+        plot.title = ggtext::element_markdown()
+    ) +
+    labs(
+        y = "Count",
+        title = "**Addon Spending per Order**",
+        subtitle = paste0(
+            "*M* = ", summary_sales_stats$mean_addon_cost |> round(2),
+            ", *SD* = ", summary_sales_stats$sd_addon_cost |> round(2),
+            ", Max = ", df$`Add-on Total` |> max()
+        )
+    )
+
+rating_plot <- df |> ggplot(aes(x = Rating)) +
+    geom_histogram(binwidth = 1, fill = viridis(n = 1, begin = 0.6)) +
+    geom_vline(aes(xintercept = mean(`Rating`)), color = "red") +
+    theme_minimal() +
+    theme(
+        plot.subtitle = ggtext::element_markdown(),
+        plot.title = ggtext::element_markdown()
+    ) +
+    labs(
+        title = "Rating histogram",
+        subtitle = paste0(
+            "*M* = ", mean(df$Rating) |> round(2),
+            ", *SD* = ", sd(df$Rating) |> round(2)
+        ),
+        y = "Count"
+    )
+ggsave(plot = rating_plot, file = "ratingplot.png", dpi = 1000, width = 4, height = 4)
+
+quanity_plot <- df |> ggplot(aes(x = Quantity)) +
+    geom_histogram(binwidth = 1, fill = viridis(n = 1, begin = 0.8)) +
+    geom_vline(aes(xintercept = mean(`Quantity`)), color = "red") +
+    theme_minimal() +
+    theme(
+        plot.title = ggtext::element_markdown(),
+        plot.subtitle = ggtext::element_markdown()
+    ) +
+    labs(
+        title = "**Quantity Histogram**",
+        subtitle = paste0(
+            "*M* = ", summary_sales_stats$mean_quantity |> round(2),
+            ", *SD* = ", summary_sales_stats$sd_quantity |> round(2),
+            ", Max = ", df$Quantity |> max()
+        ),
+        y = "Count"
+    )
+
+patchwork::wrap_plots(age_plot, price_plot, quanity_plot, nrow = 2) |>
+    ggsave(file = "patchplot.png", dpi = 1000, width = 10, height = 5)
+```
+
+## Best product?
+```{r}
+best_product <- df |>
+    group_by(SKU) |>
+    summarise(
+        mean_rating = mean(Rating),
+        sd_rating = sd(Rating),
+        product_type = first(`Product Type`)
+    ) |>
+    arrange(desc(product_type)) |>
+    mutate(SKU = factor(SKU, levels = unique(SKU)))
+
+
+product_graph <- best_product |> ggplot(aes(x = SKU, y = mean_rating, fill = product_type)) +
+    geom_bar(stat = "identity") +
+    geom_errorbar(aes(x = SKU, ymin = mean_rating - sd_rating, ymax = mean_rating + sd_rating), width = 0.5) +
+    scale_fill_viridis(discrete = T, aesthetics = c("fill", "color")) +
+    theme_minimal() +
+    theme() +
+    labs(
+        y = "Mean rating"
+    ) +
+    guides(fill = guide_legend(title = "Product Type"))
+
+ggsave(plot = product_graph, file = "product_graph.png", dpi = 1000, height = 4, width = 8, bg = "white")
+
+orders_per_product <- df |>
+    count(SKU)
+
+completed_orders_per_product <- df |>
+    filter(`Order Status` == "Completed") |>
+    count(SKU)
+
+completed_orders_per_product$n <- completed_orders_per_product$n / orders_per_product$n
+```
+
+## Best selling products and addons
+```{r}
+sku_table <- df |>
+    group_by(SKU) |>
+    summarise(total = sum(Quantity)) |>
+    arrange(desc(total))
+
+addons <- df$`Add-ons Purchased` |>
+    str_split(",") |>
+    unlist() |>
+    trimws()
+addons <- addons[addons != ""]
+addons_table <- addons |>
+    data.frame() |>
+    group_by(addons) |>
+    count() |>
+    arrange(desc(n))
+
+sku_table
+addons_table
+addons_table$n |> sum()
+```
+
+## Total revenue
+```{r}
+product_revenue <- df |>
+    filter(`Order Status` == "Completed") |>
+    select(`Total Price`) |>
+    sum()
+
+cancelled_revenue <- df |>
+    filter(`Order Status` == "Cancelled") |>
+    select(`Total Price`) |>
+    sum()
+
+typed_revenue <- df |>
+    filter(`Order Status` == "Completed") |>
+    group_by(`Product Type`) |>
+    summarise(
+        revenue = sum(`Total Price`),
+        proportion_revenue = sum(`Total Price`) / product_revenue,
+        quantity = sum(Quantity),
+        proportion_quantity = sum(Quantity) / sum(df$Quantity)
+    )
+
+typed_revenue <- typed_revenue |>
+    mutate(
+        revenue_sales_ratio = revenue / quantity
+    )
+
+addon_revenue <- df$`Add-on Total` |>
+    sum()
+
+product_revenue |> prettyNum(big.mark = ",")
+typed_revenue
+(product_revenue + addon_revenue) |> prettyNum(big.mark = ",")
+
+addon_revenue / product_revenue
+
+quantity_bar <- df |> ggplot(aes(x = `Product Type`, y = Quantity, fill = SKU)) +
+    geom_bar(position = "stack", stat = "identity") +
+    theme_minimal()
+
+revenue_bar <- df |> ggplot(aes(x = `Product Type`, y = `Total Price`, fill = SKU)) +
+    geom_bar(position = "stack", stat = "identity") +
+    theme_minimal() +
+    scale_y_continuous(labels = function(x) x / 1000000) +
+    # scale_fill_viridis(discrete = T, option = "D") +
+    labs(
+        y = "Revenue (millions)"
+    )
+
+ggsave(file = "quantityplot.png", plot = quantity_bar, dpi = 1000, width = 8, height = 4)
+ggsave(file = "revenueplot.png", plot = revenue_bar, dpi = 1000, width = 8, height = 4)
+```
+## Relationship between price and other variables
+```{r}
+loyalty <- df$`Loyalty Member`
+loyalty[loyalty == "Yes"] <- 1
+loyalty[loyalty == "No"] <- 0
+wilcox.test(df$`Total Price` ~ as.integer(loyalty), conf.int = T) # p = 0.31 relationship between spending and loyalty
+
+# loyalty <- df$`Loyalty Member`
+# loyalty[loyalty == "Yes"] <- 1
+# loyalty[loyalty == "No"] <- 0
+wilcox.test(df$Rating ~ as.integer(loyalty), conf.int = T) # p = 0.44 relationship between rating and loyalty
+
+cor.test(df$Rating, df$`Total Price`) # p < .001, r = -0.23 correlation between rating and price
+# As price increases, rating decreases
+
+remove(loyalty)
+```
+
+```{r}
+mean_price_df <- df |>
+    group_by(Rating) |>
+    summarise(
+        mean_price = mean(`Total Price`)
+    )
+
+price_rating_plot <- df |> ggplot(aes(x = as.factor(Rating), y = `Total Price`)) +
+    geom_boxplot(color = "black", linewidth = 1.1) +
+    geom_line(aes(x = Rating, y = mean_price), data = mean_price_df, linewidth = 1.1, color = "purple") +
+    stat_summary(fun.y = mean, geom = "point", shape = 20, size = 3, color = "red", fill = "red") +
+    # stat_smooth(method = "lm", color = "red") +
+    theme_minimal() +
+    theme(
+        plot.title = ggtext::element_markdown(),
+        plot.subtitle = ggtext::element_markdown()
+    ) +
+    labs(
+        x = "Rating",
+        title = "**Total order price vs Rating (Log. regression)**",
+        subtitle = "Correlation: *p* < .001, *r* = -0.23"
+    )
+price_rating_plot
+ggsave(plot = price_rating_plot, file = "price_rating_plot.png", dpi = 1000, width = 8, height = 4)
+```
+
+```{r}
+mod <- lm(`Total Price` ~ Rating, data = df)
+anova <- aov(`Total Price` ~ Rating, data = df)
+polrd <- MASS::polr(as.factor(Rating) ~ `Total Price`, data = df, Hess = T)
+
+broom::tidy(mod, conf.int = T)
+anova(mod) |>
+    parameters::model_parameters(effectsize_type = "omega") |>
+    knitr::kable(digits = 3) # to round values
+mod |> summary()
+anova |> summary()
+mod |> plot(1:6)
+```
+
+```{r}
+no_addons <- df |> filter(`Add-on Total` == 0)
+(no_addons |> nrow()) / nrow(df) # 24% of customers bought no Add ons
+
+# No pattern as to who isn't buying
+```
+
+```{r}
+df |>
+    group_by(`Loyalty Member`) |>
+    count(`Order Status`)
+```
